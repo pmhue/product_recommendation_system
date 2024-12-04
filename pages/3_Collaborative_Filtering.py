@@ -99,13 +99,7 @@ def recommend_products_with_scores(customer_id, df_products, model, top_n=5, rat
     )
 
     # Làm tròn tỷ lệ giảm giá thành 2 chữ số nguyên
-    # recommended_products['ty_le_giam_gia'] = round(recommended_products['ty_le_giam_gia'], 0)
-    # recommended_products['ty_le_giam_gia'] = recommended_products['ty_le_giam_gia'].round(0).astype(int)
-    # Xử lý tỷ lệ giảm giá
-    # recommended_products['ty_le_giam_gia'] = recommended_products['ty_le_giam_gia'].apply(lambda x: round(x * 100)).astype(int)
-    # Làm tròn tỷ lệ giảm giá thành số nguyên
-    recommended_products['ty_le_giam_gia'] = (recommended_products['ty_le_giam_gia'] * 100).round(0).astype(int)
-
+    recommended_products['ty_le_giam_gia'] = round(recommended_products['ty_le_giam_gia'], 0)
     return recommended_products
 
 # Hiển thị danh sách sản phẩm

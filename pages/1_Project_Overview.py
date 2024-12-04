@@ -16,7 +16,7 @@ st.markdown(page_bg_img, unsafe_allow_html=True)
 st.markdown("# Project Overview")
 st.header("I. Project Objectives")
 """
-Hasaki là một hệ sinh thái thương mại hàng mỹ phẩm, trong đó có hasaki.vn.
+Hasaki là một hệ sinh thái thương mại hàng mỹ phẩm lớn tại Việt Nam
 
 Trên trang này đã triển khai nhiều tiện ích hỗ trợ nâng cao trải nghiệm người dùng và họ muốn xây dựng nhiều tiện ích hơn nữa.
 Giả sử công ty này chưa triển khai Recommender System và bạn được yêu cầu triển khai hệ thống này, bạn sẽ làm gì?

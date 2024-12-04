@@ -1,0 +1,765 @@
+
+import streamlit as st
+import pandas as pd
+import pickle
+import os
+
+def install_missing_packages():
+    import subprocess
+    import sys
+    
+    try:
+        import surprise
+    except ImportError:
+        st.warning("Installing required package 'scikit-surprise'. Please wait...")
+        subprocess.check_call([sys.executable, "-m", "pip", "install", "scikit-surprise"])
+        st.success("Package installed successfully! Please restart the app.")
+        st.stop()
+
+install_missing_packages()
+import surprise
+from surprise import Dataset, SVDpp
+from surprise.model_selection import train_test_split
+from surprise.model_selection import cross_validate
+import pandas as pd
+import numpy as np
+from datetime import datetime
+from surprise import Reader, Dataset, SVD, SVDpp, NMF, SlopeOne, KNNBasic, KNNBaseline, KNNWithMeans, KNNWithZScore, CoClustering, BaselineOnly
+from surprise.model_selection.validation import cross_validate
+
+from datetime import datetime
+
+import streamlit as st
+import pandas as pd
+import pickle
+import os
+import random
+
+
+# Tải dữ liệu
+data_test = pd.read_csv('./df_summary_collaborative.csv')
+df_products = pd.read_csv('./San_pham.csv')
+
+# Tải mô hình SVD++
+model_path = './svdpp_model.pkl'
+if not os.path.exists(model_path):
+    st.error("Không tìm thấy mô hình SVD++. Vui lòng đảm bảo mô hình đã được lưu tại 'model/svdpp_model.pkl'.")
+else:
+    with open(model_path, 'rb') as f:
+        loaded_svd_pp = pickle.load(f)
+    # st.success("Mô hình SVD++ đã được tải thành công!")
+    # st.success("Chào mừng các bạn đã ghé thăm hệ thống gợi ý sản phẩm của Hasaki.vn!")
+    # Thêm hiệu ứng chạy chữ từ trái qua phải và in nghiêng
+    st.markdown(
+        """
+        <style>
+        @keyframes slide-in {
+            0% {
+                transform: translateX(-100%);
+            }
+            100% {
+                transform: translateX(0);
+            }
+        }
+        .welcome-text {
+            font-style: italic;
+            font-size: 20px;
+            color: #5271C4;
+            animation: slide-in 3s ease-in-out;
+            white-space: nowrap;
+            overflow: hidden;
+        }
+        </style>
+        <div class="welcome-text">
+            Chào mừng các bạn đã ghé thăm hệ thống gợi ý sản phẩm của Hasaki.vn!
+        </div>
+        """,
+        unsafe_allow_html=True
+    )
+
+
+# Hàm gợi ý sản phẩm dựa trên mã khách hàng
+def recommend_products_with_scores(customer_id, df_products, model, top_n=4, rating=None):
+    all_products = df_products['ma_san_pham'].unique()
+    rated_products = df_products[df_products['ma_khach_hang'] == customer_id]['ma_san_pham'].unique()
+    products_to_predict = [prod for prod in all_products if prod not in rated_products]
+
+    recommendations = []
+    for product_id in products_to_predict:
+        prediction = model.predict(customer_id, product_id)
+        recommendations.append((product_id, prediction.est))
+
+    recommended_products = pd.DataFrame(recommendations, columns=['ma_san_pham', 'predicted_rating'])
+    recommended_products = recommended_products.groupby('ma_san_pham', as_index=False).agg({'predicted_rating': 'max'})
+
+    if rating is not None:
+        recommended_products = recommended_products[recommended_products['predicted_rating'] >= rating]
+
+    recommended_products = recommended_products.nlargest(top_n, 'predicted_rating')
+    recommended_products['prediction_score'] = (recommended_products['predicted_rating'] / 5) * 100
+
+    recommended_products = recommended_products.merge(
+        df_products[['ma_san_pham', 'ten_san_pham', 'gia_ban', 'so_sao', 'mo_ta']].drop_duplicates(subset=['ma_san_pham']),
+        on='ma_san_pham',
+        how='left'
+    )
+
+    return recommended_products
+
+# Hiển thị danh sách sản phẩm
+def display_recommended_products(recommended_products, cols=5):
+    for i in range(0, len(recommended_products), cols):
+        columns = st.columns(cols)
+        for j, col in enumerate(columns):
+            if i + j < len(recommended_products):
+                product = recommended_products.iloc[i + j]
+                with col:
+                    st.write(product['ten_san_pham'])
+                    expander = st.expander(f"Mô tả")
+                    product_description = product['mo_ta']
+                    truncated_description = ' '.join(product_description.split()[:100]) + '...'
+                    expander.write(truncated_description)
+                    expander.markdown("Nhấn vào mũi tên để đóng hộp text này.")
+
+# Giao diện ứng dụng
+st.title("Hệ thống gợi ý sản phẩm - Collaborative Filtering")
+
+# Thêm tùy chọn nhập mã khách hàng
+st.write("### Nhập mã khách hàng hoặc chọn từ danh sách:")
+input_customer_id = st.text_input("Nhập mã khách hàng (nếu có thông tin mã khách hàng):", value="")
+
+# Chọn ngẫu nhiên 50 mã khách hàng từ danh sách
+customer_ids = data_test['ma_khach_hang'].unique()
+random_customer_ids = random.sample(list(customer_ids), min(50, len(customer_ids)))
+
+# Dropdown để chọn mã khách hàng
+selected_customer_id_dropdown = st.selectbox(
+    "Hoặc chọn mã khách hàng từ danh sách:",
+    options=[None] + random_customer_ids,  # Thêm tùy chọn None
+    format_func=lambda x: f"Mã khách hàng: {x}" if x else "Chưa có thông tin khách hàng"
+)
+
+# Xác định mã khách hàng cuối cùng
+if input_customer_id.strip():  # Nếu người dùng nhập mã khách hàng
+    try:
+        selected_customer_id = int(input_customer_id)  # Chuyển đổi sang kiểu số nguyên
+        if selected_customer_id not in customer_ids:
+            st.warning("Mã khách hàng bạn nhập không tồn tại trong hệ thống.")
+            selected_customer_id = None
+    except ValueError:
+        st.error("Mã khách hàng không hợp lệ. Vui lòng nhập số nguyên.")
+        selected_customer_id = None
+else:  # Nếu không nhập, sử dụng lựa chọn từ dropdown
+    selected_customer_id = selected_customer_id_dropdown
+
+# Chọn số lượng sản phẩm và mức đánh giá tối thiểu
+max_products = st.slider("Chọn số sản phẩm tối đa:", 1, 10, 5)
+star_icons = ["⭐ trở lên", "⭐⭐ trở lên", "⭐⭐⭐ trở lên", "⭐⭐⭐⭐ trở lên", "⭐⭐⭐⭐⭐"]
+selected_min_rating = st.radio("Chọn mức đánh giá tối thiểu:", star_icons)
+min_rating = star_icons.index(selected_min_rating) + 1
+
+# Nút gợi ý
+if st.button("Gợi ý sản phẩm"):
+    try:
+        if selected_customer_id:
+            # Gợi ý cho mã khách hàng được chọn
+            recommendations = recommend_products_with_scores(
+                customer_id=selected_customer_id,
+                df_products=data_test,
+                model=loaded_svd_pp,
+                top_n=max_products,
+                rating=min_rating
+            )
+        else:
+            # Gợi ý mặc định các sản phẩm có đánh giá cao
+            recommendations = data_test[
+                (data_test['so_sao'] >= 4) & (data_test['so_sao'] <= 5)
+            ].drop_duplicates(subset='ma_san_pham').nlargest(max_products, 'so_sao')
+            recommendations['prediction_score'] = (recommendations['so_sao'] / 5) * 100
+
+        if recommendations.empty:
+            st.warning("Không có sản phẩm nào phù hợp với tiêu chí lọc.")
+        else:
+            st.write("Danh sách sản phẩm được gợi ý:")
+            display_recommended_products(recommendations, cols=3)
+
+    except Exception as e:
+        st.error(f"Lỗi khi thực hiện gợi ý: {e}")
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+"""
+import streamlit as st
+import pandas as pd
+import pickle
+import os
+import random
+
+# Tải dữ liệu
+data_test = pd.read_csv('./df_summary_collaborative.csv')
+df_products = pd.read_csv('./San_pham.csv')
+
+# Tải mô hình SVD++
+model_path = './svdpp_model.pkl'
+if not os.path.exists(model_path):
+    st.error("Không tìm thấy mô hình SVD++. Vui lòng đảm bảo mô hình đã được lưu tại 'model/svdpp_model.pkl'.")
+else:
+    with open(model_path, 'rb') as f:
+        loaded_svd_pp = pickle.load(f)
+
+# Hàm gợi ý sản phẩm dựa trên mã khách hàng
+def recommend_products_with_scores(customer_id, df_products, data_test, model, top_n=4, rating=None):
+    all_products = df_products['ma_san_pham'].unique()
+    rated_products = df_products[df_products['ma_khach_hang'] == customer_id]['ma_san_pham'].unique()
+    products_to_predict = [prod for prod in all_products if prod not in rated_products]
+
+    recommendations = []
+    for product_id in products_to_predict:
+        prediction = model.predict(customer_id, product_id)
+        recommendations.append((product_id, prediction.est))
+
+    recommended_products = pd.DataFrame(recommendations, columns=['ma_san_pham', 'predicted_rating'])
+    recommended_products = recommended_products.groupby('ma_san_pham', as_index=False).agg({'predicted_rating': 'max'})
+
+    if rating is not None:
+        recommended_products = recommended_products[recommended_products['predicted_rating'] >= rating]
+
+    recommended_products = recommended_products.nlargest(top_n, 'predicted_rating')
+    
+    # Merge thêm `gia_ban` và `ty_le_giam_gia` từ `data_test`
+    recommended_products = recommended_products.merge(
+        df_products[['ma_san_pham', 'ten_san_pham', 'gia_ban', 'so_sao', 'mo_ta']].drop_duplicates(subset=['ma_san_pham']),
+        on='ma_san_pham',
+        how='left'
+    ).merge(
+        data_test[['ma_san_pham', 'ty_le_giam_gia']].drop_duplicates(subset=['ma_san_pham']),
+        on='ma_san_pham',
+        how='left'
+    )
+    
+    # Xử lý tỷ lệ giảm giá để hiển thị dưới dạng phần trăm
+    recommended_products['ty_le_giam_gia'] = recommended_products['ty_le_giam_gia'] * 100
+    recommended_products['ty_le_giam_gia'] = recommended_products['ty_le_giam_gia'].round(2)
+
+    return recommended_products
+
+# Hiển thị danh sách sản phẩm
+def display_recommended_products(recommended_products, cols=3):
+    for i in range(0, len(recommended_products), cols):
+        columns = st.columns(cols)
+        for j, col in enumerate(columns):
+            if i + j < len(recommended_products):
+                product = recommended_products.iloc[i + j]
+                with col:
+                    st.write(f"### {product['ten_san_pham']}")
+                    st.write(f"Giá: **{product['gia_ban']:,} đ**")
+                    st.write(f"Đánh giá: {'⭐' * int(product['so_sao'])}")
+                    st.write(f"Giảm giá: **{product['ty_le_giam_gia']}%**")
+                    expander = col.expander("Xem mô tả sản phẩm")
+                    expander.write(product['mo_ta'])
+
+# Giao diện ứng dụng
+st.title("Hệ thống gợi ý sản phẩm - Collaborative Filtering")
+
+# Thêm tùy chọn nhập mã khách hàng
+st.write("### Nhập mã khách hàng hoặc chọn từ danh sách:")
+input_customer_id = st.text_input("Nhập mã khách hàng (nếu có thông tin mã khách hàng):", value="")
+
+# Chọn ngẫu nhiên 50 mã khách hàng từ danh sách
+customer_ids = data_test['ma_khach_hang'].unique()
+random_customer_ids = random.sample(list(customer_ids), min(50, len(customer_ids)))
+
+# Dropdown để chọn mã khách hàng
+selected_customer_id_dropdown = st.selectbox(
+    "Hoặc chọn mã khách hàng từ danh sách:",
+    options=[None] + random_customer_ids,
+    format_func=lambda x: f"Mã khách hàng: {x}" if x else "Chưa có thông tin khách hàng"
+)
+
+# Xác định mã khách hàng cuối cùng
+if input_customer_id.strip():
+    try:
+        selected_customer_id = int(input_customer_id)
+        if selected_customer_id not in customer_ids:
+            st.warning("Mã khách hàng bạn nhập không tồn tại trong hệ thống.")
+            selected_customer_id = None
+    except ValueError:
+        st.error("Mã khách hàng không hợp lệ. Vui lòng nhập số nguyên.")
+        selected_customer_id = None
+else:
+    selected_customer_id = selected_customer_id_dropdown
+
+# Chọn số lượng sản phẩm và mức đánh giá tối thiểu
+max_products = st.slider("Chọn số sản phẩm tối đa:", 1, 10, 5)
+star_icons = ["⭐ trở lên", "⭐⭐ trở lên", "⭐⭐⭐ trở lên", "⭐⭐⭐⭐ trở lên", "⭐⭐⭐⭐⭐"]
+selected_min_rating = st.radio("Chọn mức đánh giá tối thiểu:", star_icons)
+min_rating = star_icons.index(selected_min_rating) + 1
+
+# Nút gợi ý sản phẩm
+if st.button("Gợi ý sản phẩm"):
+    try:
+        if selected_customer_id:
+            recommendations = recommend_products_with_scores(
+                customer_id=selected_customer_id,
+                df_products=df_products,
+                data_test=data_test,
+                model=loaded_svd_pp,
+                top_n=max_products,
+                rating=min_rating
+            )
+        else:
+            recommendations = data_test[
+                (data_test['so_sao'] >= 4) & (data_test['so_sao'] <= 5)
+            ].drop_duplicates(subset='ma_san_pham').nlargest(max_products, 'so_sao')
+            recommendations['ty_le_giam_gia'] = round(recommendations['ty_le_giam_gia'], 2)
+
+        if recommendations.empty:
+            st.warning("Không có sản phẩm nào phù hợp với tiêu chí lọc.")
+        else:
+            st.write("Danh sách sản phẩm được gợi ý:")
+            display_recommended_products(recommendations)
+
+    except Exception as e:
+        st.error(f"Lỗi khi thực hiện gợi ý: {e}")
+
+"""
+
+
+
+==================================================================================
+
+
+content base:
+
+
+v1:
+
+'''import pandas as pd
+import streamlit as st
+from gensim import models, similarities
+import pickle
+import random
+
+# Tải dữ liệu sản phẩm
+try:
+    Product = pd.read_csv('./Product_clean.csv', encoding='utf-8')
+except FileNotFoundError:
+    st.error("Không tìm thấy file 'Product_clean.csv'. Vui lòng kiểm tra đường dẫn và thử lại.")
+    st.stop()
+
+# Tải dictionary và mô hình TF-IDF
+try:
+    with open('./dictionary.pkl', 'rb') as file:
+        dictionary = pickle.load(file)
+    tfidf = models.TfidfModel.load('./tfidf.tfidfmodel')
+    index = similarities.SparseMatrixSimilarity.load('./index.docsim')
+except FileNotFoundError:
+    st.error("Không tìm thấy các mô hình hoặc dictionary. Vui lòng kiểm tra file và thử lại.")
+    st.stop()
+
+# Tùy chỉnh giao diện Streamlit
+st.title("Content-Based Filtering - Hệ thống gợi ý sản phẩm")
+
+# Hàm hiển thị sản phẩm
+def display_products(products, cols=4):
+    num_items = len(products)
+    rows = (num_items + cols - 1) // cols
+    for row in range(rows):
+        cols_instances = st.columns(cols)
+        for col_idx in range(cols):
+            idx = row * cols + col_idx
+            if idx < num_items:
+                with cols_instances[col_idx]:
+                    st.markdown(f"**{products[idx]['Tên sản phẩm']}**")
+                    st.markdown(f"Giá: **{products[idx]['Giá bán']:,}** đ")
+                    st.markdown(f"Đánh giá: **{products[idx]['Điểm trung bình']}⭐**")
+                    st.markdown(f"Giảm giá: **{products[idx]['Tỷ lệ giảm giá']}%**")
+
+# Hàm gợi ý sản phẩm từ danh sách
+def show_similar_products_gensim1(dataframe, index, selected_product_code=None, num_similar=4):
+    if selected_product_code is None:
+        st.warning("Bạn chưa chọn sản phẩm nào để gợi ý.")
+        return pd.DataFrame()
+
+    selected_product = dataframe[dataframe['ma_san_pham'] == selected_product_code]
+    if selected_product.empty:
+        st.error(f"Không tìm thấy sản phẩm với mã: {selected_product_code}")
+        return pd.DataFrame()
+
+    selected_product_content = selected_product.iloc[0]['content']
+    kw_vector = dictionary.doc2bow(selected_product_content.lower().split())
+    sim = index[tfidf[kw_vector]]
+
+    sorted_sim_indices = sorted(range(len(sim)), key=lambda k: sim[k], reverse=True)
+    seen_similarities = {}
+
+    for idx in sorted_sim_indices:
+        if dataframe.iloc[idx]['ma_san_pham'] == selected_product_code:
+            continue
+
+        similarity = sim[idx]
+        similar_product = dataframe.iloc[idx]
+        if similar_product['diem_trung_binh'] >= 3:
+            seen_similarities[similarity] = {
+                "Tên sản phẩm": similar_product['ten_san_pham'],
+                "Điểm trung bình": similar_product['diem_trung_binh'],
+                "Giá bán": similar_product['gia_ban'],
+                "Tỷ lệ giảm giá": f"{similar_product['ty_le_giam_gia'] * 100:.0f}",
+            }
+        if len(seen_similarities) == num_similar:
+            break
+
+    return pd.DataFrame(list(seen_similarities.values()))
+
+# Trang mặc định hiển thị Top 50 sản phẩm có đánh giá cao nhất
+def view_top_50_products():
+    st.markdown("### Top 50 sản phẩm có đánh giá cao nhất")
+    high_rating_products = Product.sort_values(by="diem_trung_binh", ascending=False).head(50)
+    high_rating_products['ty_le_giam_gia'] = high_rating_products['ty_le_giam_gia'] * 100  # Chuyển đổi tỷ lệ giảm giá thành phần trăm
+    high_rating_products['ty_le_giam_gia'] = high_rating_products['ty_le_giam_gia'].round(0)  # Làm tròn 2 chữ số nguyên
+    st.markdown(f"Hiển thị **{len(high_rating_products)}** sản phẩm được đánh giá cao nhất:")
+    display_products(
+        high_rating_products[["ten_san_pham", "diem_trung_binh", "gia_ban", "ty_le_giam_gia"]]
+        .rename(
+            columns={
+                "ten_san_pham": "Tên sản phẩm",
+                "diem_trung_binh": "Điểm trung bình",
+                "gia_ban": "Giá bán",
+                "ty_le_giam_gia": "Tỷ lệ giảm giá",
+            }
+        )
+        .to_dict("records"),
+        cols=4,
+    )
+
+# Trang gợi ý sản phẩm từ danh sách ngẫu nhiên
+def recommend_by_product():
+    st.markdown("### Gợi ý sản phẩm từ danh sách các sản phẩm của Hasaki (50 sản phẩm khách hàng xem qua)")
+    
+    # Lấy 50 sản phẩm ngẫu nhiên
+    random_products = Product.sample(50)
+    selected_code = st.selectbox(
+        "Chọn sản phẩm muốn hệ thống gợi ý:",
+        random_products['ma_san_pham'].values,
+        format_func=lambda x: Product.loc[Product['ma_san_pham'] == x, 'ten_san_pham'].values[0]
+    )
+    n = st.slider("Số lượng sản phẩm gợi ý:", 1, 10, 5)
+    if st.button("Gợi ý"):
+        similar_products_df = show_similar_products_gensim1(Product, index, selected_product_code=selected_code, num_similar=n)
+        if not similar_products_df.empty:
+            display_products(similar_products_df.to_dict('records'))
+        else:
+            st.warning("Không tìm thấy sản phẩm phù hợp!")
+
+# Tích hợp giao diện
+page_names_to_funcs = {
+    "Hiển thị Top 50 sản phẩm đánh giá cao nhất": view_top_50_products,
+    "Gợi ý sản phẩm từ danh sách các sản phẩm của Hasaki (50 sản phẩm khách hàng xem qua)": recommend_by_product,
+}
+
+# Đặt chế độ mặc định hiển thị Top 50 sản phẩm đánh giá cao nhất
+selected_page = st.sidebar.radio("Chọn chế độ gợi ý", page_names_to_funcs.keys())
+page_names_to_funcs[selected_page]()
+'''
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+'''
+import pandas as pd
+import streamlit as st
+from gensim import models, similarities
+import pickle
+from time import time
+
+# Tải dữ liệu sản phẩm
+try:
+    Product = pd.read_csv('./Product_clean.csv', encoding='utf-8')
+except FileNotFoundError:
+    st.error("Không tìm thấy file 'Product_clean.csv'. Vui lòng kiểm tra đường dẫn và thử lại.")
+    st.stop()
+
+# Tải dictionary và mô hình TF-IDF
+try:
+    with open('./dictionary.pkl', 'rb') as file:
+        dictionary = pickle.load(file)
+    tfidf = models.TfidfModel.load('./tfidf.tfidfmodel')
+    index = similarities.SparseMatrixSimilarity.load('./index.docsim')
+except FileNotFoundError:
+    st.error("Không tìm thấy các mô hình hoặc dictionary. Vui lòng kiểm tra file và thử lại.")
+    st.stop()
+
+# Tùy chỉnh giao diện Streamlit
+st.title("Content-Based Filtering - Hệ thống gợi ý sản phẩm")
+
+# Hàm hiển thị sản phẩm
+def display_products(products, cols=4):
+    num_items = len(products)
+    rows = (num_items + cols - 1) // cols
+    for row in range(rows):
+        cols_instances = st.columns(cols)
+        for col_idx in range(cols):
+            idx = row * cols + col_idx
+            if idx < num_items:
+                with cols_instances[col_idx]:
+                    st.markdown(f"**{products[idx]['Tên sản phẩm']}**")
+                    st.markdown(f"Giá: **{products[idx]['Giá bán']:,}** đ")
+                    st.markdown(f"Đánh giá: **{products[idx]['Điểm trung bình']}⭐**")
+                    st.markdown(f"Giảm giá: **{products[idx]['Tỷ lệ giảm giá']}%**")
+
+# Hàm gợi ý sản phẩm từ danh sách
+def show_similar_products_gensim1(dataframe, index, selected_product_code=None, num_similar=4):
+    if selected_product_code is None:
+        st.warning("Bạn chưa chọn sản phẩm nào để gợi ý.")
+        return pd.DataFrame()
+
+    selected_product = dataframe[dataframe['ma_san_pham'] == selected_product_code]
+    if selected_product.empty:
+        st.error(f"Không tìm thấy sản phẩm với mã: {selected_product_code}")
+        return pd.DataFrame()
+
+    selected_product_content = selected_product.iloc[0]['content']
+    kw_vector = dictionary.doc2bow(selected_product_content.lower().split())
+    sim = index[tfidf[kw_vector]]
+
+    sorted_sim_indices = sorted(range(len(sim)), key=lambda k: sim[k], reverse=True)
+    seen_similarities = {}
+
+    for idx in sorted_sim_indices:
+        if dataframe.iloc[idx]['ma_san_pham'] == selected_product_code:
+            continue
+
+        similarity = sim[idx]
+        similar_product = dataframe.iloc[idx]
+        if similar_product['diem_trung_binh'] >= 3:
+            seen_similarities[similarity] = {
+                "Tên sản phẩm": similar_product['ten_san_pham'],
+                "Điểm trung bình": similar_product['diem_trung_binh'],
+                "Giá bán": similar_product['gia_ban'],
+                "Tỷ lệ giảm giá": f"{similar_product['ty_le_giam_gia'] * 100:.0f}",
+            }
+        if len(seen_similarities) == num_similar:
+            break
+
+    return pd.DataFrame(list(seen_similarities.values()))
+
+# Hàm tìm kiếm sản phẩm dựa vào nội dung nhập vào
+def show_similar_products_input_gensim2(dataframe, index, input_product_name, num_similar=4):
+    input_product_tokens = input_product_name.lower().split()
+    kw_vector = dictionary.doc2bow(input_product_tokens)
+    sim = index[tfidf[kw_vector]]
+
+    sorted_sim_indices = sorted(range(len(sim)), key=lambda k: sim[k], reverse=True)
+    seen_similarities = {}
+    for idx in sorted_sim_indices:
+        similarity = sim[idx]
+        similar_product = dataframe.iloc[idx]
+        similar_product_name = similar_product['ten_san_pham']
+        similar_product_score = similar_product['diem_trung_binh']
+        similar_product_discount = similar_product.get('ty_le_giam_gia', 0) * 100
+
+        if similar_product_name.lower() != input_product_name.lower() and similar_product_score >= 3:
+            seen_similarities[similarity] = {
+                "Tên sản phẩm": similar_product_name,
+                "Điểm trung bình": similar_product_score,
+                "Giá bán": similar_product['gia_ban'],
+                "Tỷ lệ giảm giá": round(similar_product_discount, 0),
+            }
+        if len(seen_similarities) == num_similar:
+            break
+
+    return pd.DataFrame(list(seen_similarities.values()))
+
+# Trang tìm kiếm sản phẩm theo từ khóa nhập vào
+def search_by_input():
+    st.markdown("### Tìm kiếm sản phẩm dựa vào nội dung nhập")
+
+    if "input_product_name" not in st.session_state:
+        st.session_state["input_product_name"] = ""
+
+    input_product_name = st.text_area(
+        "Nhập tên sản phẩm bạn muốn tìm (hoặc để trống để xem Top 50 sản phẩm):",
+        value=st.session_state["input_product_name"],
+        key="input_product_name",
+        height=100
+    )
+    num_similar = st.slider("Số lượng sản phẩm gợi ý:", 1, 10, 5)
+
+    if st.button("Tìm kiếm"):
+        if not input_product_name.strip():
+            view_top_50_products()
+        else:
+            similar_products_df = show_similar_products_input_gensim2(Product, index, input_product_name, num_similar)
+            if not similar_products_df.empty:
+                display_products(similar_products_df.to_dict("records"))
+            else:
+                st.warning("Không tìm thấy sản phẩm nào phù hợp!")
+
+# Trang hiển thị Top 50 sản phẩm có đánh giá cao nhất
+def view_top_50_products():
+    st.markdown("### Top 50 sản phẩm có đánh giá cao nhất")
+    high_rating_products = Product.sort_values(by="diem_trung_binh", ascending=False).head(50)
+    high_rating_products['ty_le_giam_gia'] = high_rating_products['ty_le_giam_gia'] * 100
+    high_rating_products['ty_le_giam_gia'] = high_rating_products['ty_le_giam_gia'].round(0)
+    st.markdown(f"Hiển thị **{len(high_rating_products)}** sản phẩm được đánh giá cao nhất:")
+    display_products(
+        high_rating_products[["ten_san_pham", "diem_trung_binh", "gia_ban", "ty_le_giam_gia"]]
+        .rename(
+            columns={
+                "ten_san_pham": "Tên sản phẩm",
+                "diem_trung_binh": "Điểm trung bình",
+                "gia_ban": "Giá bán",
+                "ty_le_giam_gia": "Tỷ lệ giảm giá",
+            }
+        )
+        .to_dict("records"),
+        cols=4,
+    )
+
+# Trang gợi ý sản phẩm từ danh sách ngẫu nhiên
+def recommend_by_product():
+    st.markdown("### Gợi ý sản phẩm từ danh sách các sản phẩm của Hasaki (50 sản phẩm khách hàng xem qua)")
+    random_products = Product.sample(50)
+    selected_code = st.selectbox(
+        "Chọn sản phẩm muốn hệ thống gợi ý:",
+        random_products['ma_san_pham'].values,
+        format_func=lambda x: Product.loc[Product['ma_san_pham'] == x, 'ten_san_pham'].values[0]
+    )
+    n = st.slider("Số lượng sản phẩm gợi ý:", 1, 10, 5)
+    if st.button("Gợi ý"):
+        similar_products_df = show_similar_products_gensim1(Product, index, selected_product_code=selected_code, num_similar=n)
+        if not similar_products_df.empty:
+            display_products(similar_products_df.to_dict('records'))
+        else:
+            st.warning("Không tìm thấy sản phẩm phù hợp!")
+
+# Tích hợp giao diện
+page_names_to_funcs = {
+    "Hiển thị Top 50 sản phẩm đánh giá cao nhất": view_top_50_products,
+    "Gợi ý sản phẩm từ danh sách các sản phẩm của Hasaki (50 sản phẩm khách hàng xem qua)": recommend_by_product,
+    "Tìm kiếm sản phẩm bằng nội dung nhập": search_by_input,
+}
+
+selected_page = st.sidebar.radio("Chọn chế độ gợi ý", page_names_to_funcs.keys())
+page_names_to_funcs[selected_page]()
+'''
+
+
+
+
+
+============================
+Launch page
+
+'''import streamlit as st
+import base64
+
+# Cấu hình trang Streamlit
+st.set_page_config(
+    page_title="A Recommender System for Hasaki.vn",
+    page_icon="🛒",
+    layout="wide",
+    initial_sidebar_state="expanded",
+)
+
+# Tùy chỉnh giao diện sidebar
+def set_sidebar_style():
+    sidebar_style = '''
+    <style>
+    [data-testid="stSidebar"] {
+        background: linear-gradient(-225deg, #5271C4 0%, #B19FFF 48%, #ECA1FE 100%);
+        color: white;
+    }
+    </style>
+    '''
+    st.markdown(sidebar_style, unsafe_allow_html=True)
+
+set_sidebar_style()
+
+# Hàm đặt hình nền
+def set_background_image(image_file):
+    try:
+        with open(image_file, "rb") as file:
+            encoded_string = base64.b64encode(file.read()).decode()
+        st.markdown(
+            f"""
+            <style>
+            .stApp {{
+                background-image: url(data:image/png;base64,{encoded_string});
+                background-size: cover;
+                background-repeat: no-repeat;
+                background-attachment: fixed;
+            }}
+            </style>
+            """,
+            unsafe_allow_html=True
+        )
+    except FileNotFoundError:
+        st.error(f"Không tìm thấy file hình nền: {image_file}")
+
+# Đặt hình nền
+set_background_image("hasaki_background.jpg")
+
+# Tiêu đề chính
+st.markdown(
+    '<h1 style="color:#CCFF00; text-align: center;">A Recommender System for Hasaki.vn 🛒</h1>',
+    unsafe_allow_html=True
+)
+
+# Danh sách thành viên nhóm
+def display_team_members(members):
+    st.markdown('<h2 style="color:#CCFF00; text-align: center;">Thành viên nhóm:</h2>', unsafe_allow_html=True)
+    for member in members:
+        st.markdown(f'<div style="color:#CCFF00; font-size: 20px; text-align: center;">{member}</div>', unsafe_allow_html=True)
+
+team_members = ["1. Phan Minh Huệ", "2. Huỳnh Danh Nhân"]
+display_team_members(team_members)
+
+# Kết nối hoặc điều hướng
+def add_navigation_button(link, text):
+    st.markdown(
+        f'<div style="text-align: center; margin-top: 30px;">'
+        f'<a href="{link}" target="_blank" style="color: #FFF; font-size: 20px; text-decoration: none; background: #5271C4; padding: 10px 20px; border-radius: 10px;">{text}</a>'
+        f'</div>',
+        unsafe_allow_html=True
+    )
+
+add_navigation_button("https://hasaki.vn", "Hãy tham quan các sản phẫm trên website của chúng tôi tại đây: Hasaki.vn")
+'''

@@ -1,11 +1,7 @@
 streamlit
 pandas
-underthesea
 gensim
 surprise
 seaborn
 matplotlib
 scikit-learn
-unidecode
-ydata_profiling
-nltk

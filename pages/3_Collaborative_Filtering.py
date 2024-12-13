@@ -176,7 +176,7 @@ else:
 
 if st.session_state['selected_customer_id']:
     customer_info = get_customer_info(st.session_state['selected_customer_id'], data_test)
-    st.success(f"**Thông tin khách hàng:**\n- Mã khách hàng: {customer_info['ma_khach_hang']}\n- Tên khách hàng: {customer_info['ten_khach_hang']}")
+    st.success(f"**Thông tin khách hàng:**\n- Mã khách hàng: {customer_info['ma_khach_hang']}\n")
 
 
 # Tùy chọn số lượng sản phẩm và mức đánh giá tối thiểu

@@ -35,12 +35,14 @@ def display_products(products, cols=4):
             if idx < num_items:
                 with cols_instances[col_idx]:
                     st.markdown(f"**{products[idx]['Tên sản phẩm']}**")
+                    st.markdown(f"Mã sản phẩm: **{products[idx]['Mã sản phẩm']}**")
                     st.markdown(f"Giá: **{products[idx]['Giá bán']:,}** đ")
                     st.markdown(f"Đánh giá: **{products[idx]['Điểm trung bình']}⭐**")
                     st.markdown(f"Giảm giá: **{products[idx]['Tỷ lệ giảm giá']}%**")
                     # Hiển thị mô tả sản phẩm
                     expander = st.expander("Xem mô tả sản phẩm")
                     expander.write(products[idx]['Mô tả'])
+
 
 # Hàm gợi ý sản phẩm từ danh sách
 def show_similar_products_gensim1(dataframe, index, selected_product_code=None, num_similar=4):
@@ -69,6 +71,7 @@ def show_similar_products_gensim1(dataframe, index, selected_product_code=None, 
         if similar_product['diem_trung_binh'] >= 3:
             seen_similarities[similarity] = {
                 "Tên sản phẩm": similar_product['ten_san_pham'],
+                "Mã sản phẩm": similar_product['ma_san_pham'],
                 "Điểm trung bình": similar_product['diem_trung_binh'],
                 "Giá bán": similar_product['gia_ban'],
                 "Tỷ lệ giảm giá": f"{similar_product['ty_le_giam_gia'] * 100:.0f}",
@@ -97,6 +100,7 @@ def show_similar_products_input_gensim2(dataframe, index, input_product_name, nu
         if similar_product_name.lower() != input_product_name.lower() and similar_product_score >= 3:
             seen_similarities[similarity] = {
                 "Tên sản phẩm": similar_product_name,
+                "Mã sản phẩm": similar_product['ma_san_pham'],
                 "Điểm trung bình": similar_product_score,
                 "Giá bán": similar_product['gia_ban'],
                 "Tỷ lệ giảm giá": round(similar_product_discount, 0),
@@ -140,10 +144,11 @@ def view_top_50_products():
     high_rating_products['ty_le_giam_gia'] = high_rating_products['ty_le_giam_gia'].round(0)
     st.markdown(f"Hiển thị **{len(high_rating_products)}** sản phẩm được đánh giá cao nhất:")
     display_products(
-        high_rating_products[["ten_san_pham", "diem_trung_binh", "gia_ban", "ty_le_giam_gia", "mo_ta"]]
+        high_rating_products[["ten_san_pham", "ma_san_pham","diem_trung_binh", "gia_ban", "ty_le_giam_gia", "mo_ta"]]
         .rename(
             columns={
                 "ten_san_pham": "Tên sản phẩm",
+                 "ma_san_pham": "Mã sản phẩm",
                 "diem_trung_binh": "Điểm trung bình",
                 "gia_ban": "Giá bán",
                 "ty_le_giam_gia": "Tỷ lệ giảm giá",
@@ -157,19 +162,60 @@ def view_top_50_products():
 # Trang gợi ý sản phẩm từ danh sách ngẫu nhiên
 def recommend_by_product():
     st.markdown("### Gợi ý sản phẩm từ danh sách các sản phẩm của Hasaki (50 sản phẩm khách hàng xem qua)")
-    random_products = Product.sample(50)
-    selected_code = st.selectbox(
-        "Chọn sản phẩm muốn hệ thống gợi ý:",
-        random_products['ma_san_pham'].values,
-        format_func=lambda x: Product.loc[Product['ma_san_pham'] == x, 'ten_san_pham'].values[0]
-    )
-    n = st.slider("Số lượng sản phẩm gợi ý:", 1, 10, 5)
-    if st.button("Gợi ý"):
-        similar_products_df = show_similar_products_gensim1(Product, index, selected_product_code=selected_code, num_similar=n)
-        if not similar_products_df.empty:
-            display_products(similar_products_df.to_dict('records'))
-        else:
-            st.warning("Không tìm thấy sản phẩm phù hợp!")
+
+    # Khởi tạo random products trong session state nếu chưa có
+    if 'random_products' not in st.session_state:
+        st.session_state['random_products'] = Product.sample(50)
+    
+    if 'selected_product' not in st.session_state:
+        st.session_state['selected_product'] = None
+
+    def format_func(product_code):
+        if product_code:
+            return Product.loc[Product['ma_san_pham'] == product_code, 'ten_san_pham'].values[0]
+        return None
+
+    # Button để reset lựa chọn sản phẩm
+    if st.session_state.get('selected_product') is not None:
+        if st.button("Chọn sản phẩm khác"):
+            st.session_state['selected_product'] = None
+            st.session_state['random_products'] = Product.sample(50)
+            st.rerun()
+    
+    # Chỉ hiển thị selectbox khi chưa chọn sản phẩm
+    if st.session_state['selected_product'] is None:
+        current_selected_code = st.selectbox(
+            "Chọn sản phẩm muốn hệ thống gợi ý:",
+            options=st.session_state['random_products']['ma_san_pham'].tolist(),
+            format_func=format_func,
+            key="product_selectbox"
+        )
+
+        if current_selected_code and st.button("Xác nhận chọn sản phẩm"):
+            selected_product = Product[Product['ma_san_pham'] == current_selected_code].iloc[0]
+            st.session_state['selected_product'] = {
+                'name': selected_product['ten_san_pham'],
+                'code': current_selected_code
+            }
+            st.rerun()
+    
+    # Hiển thị thông tin sản phẩm đã chọn
+    if st.session_state.get('selected_product'):
+        selected_name = st.session_state['selected_product']['name']
+        selected_code = st.session_state['selected_product']['code']
+        st.markdown(f"**Sản phẩm đã chọn:**")
+        st.markdown(f"- Tên sản phẩm: **{selected_name}**")
+        st.markdown(f"- Mã sản phẩm: **{selected_code}**")
+
+        n = st.slider("Số lượng sản phẩm gợi ý:", 1, 10, 5)
+        if st.button("Gợi ý", key="recommend_button"):
+            similar_products_df = show_similar_products_gensim1(
+                Product, index, selected_product_code=selected_code, num_similar=n
+            )
+            if not similar_products_df.empty:
+                display_products(similar_products_df.to_dict('records'))
+            else:
+                st.warning("Không tìm thấy sản phẩm phù hợp!")
 
 # Tích hợp giao diện
 page_names_to_funcs = {

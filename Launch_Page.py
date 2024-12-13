@@ -1,3 +1,4 @@
+
 import streamlit as st
 import base64
 
@@ -33,9 +34,15 @@ def set_background_image(image_file):
             <style>
             .stApp {{
                 background-image: url(data:image/png;base64,{encoded_string});
-                background-size: 100% 100%;
+                background-size: auto 55%; /* Điều chỉnh chiều cao hình nền là 50% và giữ tỉ lệ */
                 background-repeat: no-repeat;
-                background-attachment: fixed;
+                background-position: center; /* Căn giữa hình nền */
+                background-attachment: fixed; /* Giữ hình nền cố định khi cuộn */
+                 min-height: 100vh; /* Đảm bảo chiều cao tối thiểu trang */
+                 display: flex; /* Sử dụng flexbox */
+                flex-direction: column; /* Sắp xếp các phần tử theo chiều dọc */
+                justify-content: center; /* Căn giữa hình nền theo chiều dọc */
+                align-items: center; /* Căn giữa hình nền theo chiều ngang */
             }}
             </style>
             """,

@@ -195,22 +195,31 @@ def recommend_by_product():
             selected_product = Product[Product['ma_san_pham'] == current_selected_code].iloc[0]
             st.session_state['selected_product'] = {
                 'name': selected_product['ten_san_pham'],
-                'code': current_selected_code
+                'code': current_selected_code,
+                'price': selected_product['gia_ban'],
+                'rating': selected_product['diem_trung_binh'],
+                'discount': selected_product['ty_le_giam_gia'],
+                'description': selected_product['mo_ta']
             }
             st.rerun()
     
     # Hiển thị thông tin sản phẩm đã chọn
     if st.session_state.get('selected_product'):
-        selected_name = st.session_state['selected_product']['name']
-        selected_code = st.session_state['selected_product']['code']
-        st.markdown(f"**Sản phẩm đã chọn:**")
-        st.markdown(f"- Tên sản phẩm: **{selected_name}**")
-        st.markdown(f"- Mã sản phẩm: **{selected_code}**")
+        st.markdown("**Sản phẩm đã chọn:**")
+        st.markdown(f"* Tên sản phẩm: **{st.session_state['selected_product']['name']}**")
+        st.markdown(f"* Mã sản phẩm: **{st.session_state['selected_product']['code']}**")
+        st.markdown(f"* Giá: **{st.session_state['selected_product']['price']:,}** đ")
+        st.markdown(f"* Đánh giá: **{st.session_state['selected_product']['rating']}⭐**")
+        st.markdown(f"* Giảm giá: **{st.session_state['selected_product']['discount'] * 100:.0f}%**")
+        
+        with st.expander("Xem mô tả sản phẩm"):
+            st.write(st.session_state['selected_product']['description'])
 
         n = st.slider("Số lượng sản phẩm gợi ý:", 1, 10, 5)
         if st.button("Gợi ý", key="recommend_button"):
             similar_products_df = show_similar_products_gensim1(
-                Product, index, selected_product_code=selected_code, num_similar=n
+                Product, index, selected_product_code=st.session_state['selected_product']['code'], 
+                num_similar=n
             )
             if not similar_products_df.empty:
                 display_products(similar_products_df.to_dict('records'))
